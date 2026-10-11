@@ -13,6 +13,11 @@ starts right away. **The timer keeps counting down while the lid is
 closed**; only its on-screen redraw pauses, also for a session started with
 the lid already closed.
 
+[Auto mode](auto.md) uses the same actions only while explicitly registered
+agent work holds sleep. With Auto armed but no active work, lid close keeps
+normal macOS sleep behavior. Auto completion is independent of window
+visibility or brief idle gaps, and safety ends pause Auto until re-enabled.
+
 ## Display and keyboard backlight
 
 The display step exists because the sleep guard stops macOS from doing it:

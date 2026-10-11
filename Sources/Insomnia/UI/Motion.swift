@@ -73,6 +73,20 @@ enum Motion {
     static let blinkCloseResponse: TimeInterval = 0.2
     static let blinkCloseDampingFraction = 0.92
     static let blinkClose: Animation = .spring(response: blinkCloseResponse, dampingFraction: blinkCloseDampingFraction)
+    /// Auto rests open for three seconds, briefly closes, then reopens.
+    /// Response is not a spring's full duration. Use the normal eye's actual
+    /// settling times so Auto never cuts a transition short. A small closed
+    /// beat keeps the blink legible before the lid reopens.
+    static let autoBlinkOpenDuration: TimeInterval = max(
+        Spring(response: blinkResponse, dampingRatio: blinkDampingFraction).settlingDuration,
+        Spring(response: pupilOpenResponse, dampingRatio: pupilOpenDampingFraction).settlingDuration + pupilOpenDelay
+    ) + 0.02
+    static let autoBlinkCloseDuration: TimeInterval = max(
+        Spring(response: blinkCloseResponse, dampingRatio: blinkCloseDampingFraction).settlingDuration,
+        pupilCloseDuration
+    ) + 0.12
+    static let autoBlinkPause: TimeInterval = 3
+
     /// Reduce Motion: the lid and the lashes crossfade instead.
     static let reducedBlinkDuration: TimeInterval = 0.1
     static let reducedBlink: Animation = .easeInOut(duration: reducedBlinkDuration)

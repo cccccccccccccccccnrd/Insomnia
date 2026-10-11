@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1130" height="170" viewBox="0 0 1130 170" role="img" aria-labelledby="sb-title sb-desc">
   <title id="sb-title">Insomnia session in the menu bar</title>
-  <desc id="sb-desc">Left-click the resting eye to start the configured default session, initially four hours. Right-click opens quick actions. The eye opens while the countdown runs in hours and minutes. Left-click the eye or timer to end early.</desc>
+  <desc id="sb-desc">Either click opens quick actions without changing modes. Choose a timer preset, watch its countdown, and choose End session in the menu to end early.</desc>
   <style>
     svg { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Helvetica, Arial, sans-serif; }
     .bg { fill: #242628; }
@@ -34,7 +34,7 @@
        captions share the baseline y=50 and are centred over their own strip. -->
 
   <!-- 1. Set a duration: bar 388 x 56 native, 485 x 70 drawn, x 28..513 -->
-  <text class="cap" x="270.5" y="50" font-size="24" font-weight="600" text-anchor="middle">Left-click to start</text>
+  <text class="cap" x="270.5" y="50" font-size="24" font-weight="600" text-anchor="middle">Choose a timer</text>
   <g transform="translate(28 72) scale(1.25)">
     <rect class="bar" x="0" y="0" width="388" height="56" rx="12"/>
     <g transform="translate(14 12.7) scale(1.275)">
@@ -53,8 +53,8 @@
     <text class="count" x="62" y="36" font-size="24" font-weight="500">4:00</text>
   </g>
 
-  <!-- 3. Left-click to end: resting eye, x 839.5..1102 -->
-  <text class="cap" x="970.75" y="50" font-size="24" font-weight="600" text-anchor="middle">Left-click to end</text>
+  <!-- 3. End in the menu: resting eye, x 839.5..1102 -->
+  <text class="cap" x="970.75" y="50" font-size="24" font-weight="600" text-anchor="middle">End in the menu</text>
   <g transform="translate(839.5 72) scale(1.25)">
     <rect class="bar" x="0" y="0" width="210" height="56" rx="12"/>
     <g transform="translate(14 12.7) scale(1.275)">

@@ -6389,6 +6389,8 @@ private final class ScriptFixture {
 
     private func writeScriptCopies() throws {
         let src = Self.productionScripts
+        try fm.copyItem(at: src.appendingPathComponent("agent-run.sh"),
+                        to: repoScripts.appendingPathComponent("agent-run.sh"))
         let backstopText = try String(contentsOf: src.appendingPathComponent("backstop.sh"), encoding: .utf8)
         try Self.patch(backstopText, [
             "PMSET": fakePmset,

@@ -14,6 +14,7 @@ enum StatusMenu {
             case separator
             case settings
             case quit
+            case toggleAuto
             /// Relaunch this browser with the occlusion flags. Carries the
             /// bundle id and name, so the item still names the same browser
             /// after a scan replaces the list.
@@ -37,6 +38,9 @@ enum StatusMenu {
     /// precedes it, so the menu never opens with a stray rule at the top.
     /// `hotspotWarning` is the line about a hotspot password the failover
     /// could not use (`HotspotPasswordProblem.menuLine`).
+    /// `lidSimulationBuild` adds the line that marks a build with the
+    /// scripts/simulate-lid.sh watcher compiled in (`LidSimulationBuild`),
+    /// so such a build is never mistaken for a normal one.
     /// `relaunchProblems` say why browser relaunches did not happen, one
     /// line per browser; they follow the browser lines, since the browsers
     /// they name may no longer be in them.
@@ -54,7 +58,8 @@ enum StatusMenu {
         error: String?,
         commandRunning: String? = nil,
         foreignSleep: String? = nil,
-        outputsWaiting: [SavedAudioOutput] = []
+        outputsWaiting: [SavedAudioOutput] = [],
+        lidSimulationBuild: Bool = false
     ) -> [Item] {
         var out: [Item] = []
         if let held = SleepHeldLine.line(sessionActive: sessionActive, sleepHeld: sleepHeld) {
@@ -65,6 +70,9 @@ enum StatusMenu {
         }
         if let actions = present(actions) {
             out.append(Item(title: actions, kind: .info))
+        }
+        if lidSimulationBuild {
+            out.append(Item(title: LidSimulationBuild.marker, kind: .warning))
         }
         if let throttle = present(StatusLines.throttleWarning(throttledBrowsers.map(\.name))) {
             out.append(Item(title: throttle, kind: .warning))
@@ -122,7 +130,9 @@ enum StatusMenu {
         settings: Selector,
         quit: Selector,
         relaunchBrowser: Selector,
-        stopWaitingForOutput: Selector
+        stopWaitingForOutput: Selector,
+        toggleAuto: Selector? = nil,
+        autoToggleEnabled: Bool = true
     ) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
@@ -141,6 +151,11 @@ enum StatusMenu {
                     attributes[.foregroundColor] = NSColor.systemOrange
                 }
                 entry.attributedTitle = NSAttributedString(string: item.title, attributes: attributes)
+                menu.addItem(entry)
+            case .toggleAuto:
+                let entry = NSMenuItem(title: item.title, action: toggleAuto, keyEquivalent: "")
+                entry.target = target
+                entry.isEnabled = toggleAuto != nil && autoToggleEnabled
                 menu.addItem(entry)
             case .settings:
                 menu.addItem(action(title: item.title, selector: settings, key: ",", target: target))

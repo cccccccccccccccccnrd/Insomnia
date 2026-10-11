@@ -54,7 +54,7 @@ struct SettingsSessionControls: View {
         } header: {
             SettingsSectionHeader(title: "Session", symbol: "timer")
         } footer: {
-            Text("Left-click the menu bar eye to start this duration. Right-click for quick actions.")
+            Text("Click the menu bar eye to open quick actions and choose a timer or Auto.")
         }
     }
 

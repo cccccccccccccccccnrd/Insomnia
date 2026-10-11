@@ -1,22 +1,40 @@
 # Menu bar and settings
 
-Right-click or Control-click the eye or countdown for quick actions. The 30m, 1h, 2h, 4h, 6h and 8h
-buttons start a session or add time. Left-click toggles the
-configured default duration, initially four hours. Settings > General manages
-presets and the default. The status item contains only the eye and timer;
-left-click either to end the session. There is no separate X button.
-The AppKit host consumes the complete right-click or Control-click gesture
+The base UI is from [PR #63](https://github.com/krishhgg/Insomnia/pull/63),
+revision `e3840ca`. Its validation record below describes the PR author's
+checks, not a new local full-suite run. This checkout additionally integrates
+[Auto](auto.md) into the same quick menu: explicit enable/disable, current job
+names and idle/working/checking/paused/restoring status in its tooltip/menu.
+Auto remains icon-only; the eye rests open for three seconds, briefly closes,
+then reopens while armed. Reduce Motion keeps it steadily open.
+Auto is enabled by default after clean launch recovery, unless a timed
+session resumes. Manual/safety pauses remain latched for the current run.
+Timer presets can replace idle Auto but cannot replace or extend active/arming work.
+Native Settings retains the PR design.
+
+Either click (or Control-click) on the eye/countdown toggles quick actions:
+click to open, click again to close. The popover delegate leaves a fresh
+anchor click to this toggle instead of auto-dismissing then reopening it.
+Outside clicks, Escape and focus changes retain native transient dismissal.
+The 30m, 1h, 2h, 4h, 6h and 8h buttons start a timer or add time.
+Start/End session and Enable/Disable Auto are explicit menu controls.
+Settings > General manages presets and the default. There is no separate X button.
+The AppKit host consumes the complete left/right/Control-click gesture
 before SwiftUI sees it, including drag and release events. Opening the menu
 does not start or end a session.
 
 Quick actions use a 260-point panel with a three-column preset grid. The
 content owns its short entrance animation. Eye opening uses a 0.28-second
-spring; hover feedback settles in 0.06 seconds and settings disclosures in
+response spring; Auto waits for the full ~0.51s opening/~0.36s closing settle
+plus a short closed beat before reversing, rather than clipping those curves.
+Hover feedback settles in 0.06 seconds and settings disclosures in
 0.1 seconds. Reduce Motion retains short fades.
 
-Successful manual activation plays a soft rising boop; a fully restored
-manual end plays a lower bleep. Opening the menu, adding time and failed
-actions stay silent. Both 0.14-second cues are generated locally and cached
+Successful timer activation and Auto enablement (including the clean-launch
+default) play a soft rising boop; fully restored timer end and Auto disablement
+play a lower bleep. Idle Auto toggles still sound even without a sleep hold.
+Opening the menu, adding time, automatic job transitions and failed actions
+stay silent. Both 0.14-second cues are generated locally and cached
 as native NSSound objects. Playback does not change system audio settings.
 
 Settings uses a native macOS preferences toolbar with General, Lid actions

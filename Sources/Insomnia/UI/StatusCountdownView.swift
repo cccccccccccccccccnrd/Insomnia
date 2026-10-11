@@ -25,8 +25,8 @@ struct StatusCountdownView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Click to end the session. Right-click for quick actions.")
-        .accessibilityLabel(model.phase == .starting ? "Starting session" : "\(text) hours and minutes remaining. End session")
-        .accessibilityAction(named: Text("Open quick actions"), onOpenMenu)
+        .help("Click or right-click to toggle quick actions.")
+        .accessibilityLabel(model.phase == .starting ? "Starting session. Toggle quick actions" : "\(text) hours and minutes remaining. Toggle quick actions")
+        .accessibilityAction(named: Text("Toggle quick actions"), onOpenMenu)
     }
 }

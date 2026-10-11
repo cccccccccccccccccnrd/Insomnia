@@ -92,7 +92,9 @@ final class UIStatusTests: XCTestCase {
         XCTAssertFalse(StatusHostingView.usesSystemDrag(modifiers: .control))
         XCTAssertTrue(StatusHostingView.handlesMenu(type: .rightMouseDown, modifiers: []))
         XCTAssertTrue(StatusHostingView.handlesMenu(type: .leftMouseDown, modifiers: .control))
-        XCTAssertFalse(StatusHostingView.handlesMenu(type: .leftMouseDown, modifiers: []))
+        XCTAssertTrue(StatusHostingView.handlesMenu(type: .leftMouseDown, modifiers: []))
+        XCTAssertFalse(StatusHostingView.handlesMenu(type: .leftMouseDown, modifiers: .command))
+        XCTAssertFalse(StatusHostingView.handlesMenu(type: .rightMouseDown, modifiers: .command))
     }
 
     func testFreezePreviewIgnoresUnrelatedSettingsChanges() {

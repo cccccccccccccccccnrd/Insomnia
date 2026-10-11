@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Everything drawn inside the status item: the mark, the three pill slots
-/// while entering, or the countdown while a session runs or starts.
+/// while entering or the timed countdown. Auto remains icon-only.
 ///
 /// The layout here changes only on state the controller sets outside any
 /// animation transaction (`slotsPresent`, `phase` and `startError`), and
@@ -33,6 +33,7 @@ struct StatusRootView: View {
     /// Each slot's laid-out width, for the distance a collapsing pill
     /// travels; a fixed slot's width never changes once measured.
     @State private var pillWidths: [DurationInput.Field: CGFloat] = [:]
+    @State private var autoEyeOpen = true
 
     private var reduceMotion: Bool { reduceMotionEnv || Motion.reduceMotion }
     /// Sleep is held right now (journal-backed), independent of the UI phase.
@@ -48,6 +49,44 @@ struct StatusRootView: View {
     /// confirms it: the blink is the first thing that answers the keystroke.
     /// A refused start closes it again with the pills coming back.
     private var eyeOpen: Bool { isRunning || model.phase == .starting }
+
+    private var usesAutoPresentation: Bool {
+        manager.agentAuto?.enabled == true || manager.session?.agentAuto == true
+            || (manager.agentAuto?.pauseReason != nil && !manager.isActive)
+            || model.autoActionPending || AutoMenuBarPresentation.isRestoring(manager: manager)
+    }
+
+    private var showsInput: Bool { model.slotsPresent && !usesAutoPresentation }
+    private var loopsAutoEye: Bool {
+        AutoEyeBlink.enabled(armed: manager.agentAuto?.enabled == true, reduceMotion: reduceMotion)
+    }
+
+    private var autoPresentation: AutoMenuBarPresentation {
+        .current(manager: manager, model: model)
+    }
+
+    private var autoHelp: String {
+        var lines = [autoPresentation.title, autoPresentation.detail]
+        if let auto = manager.agentAuto {
+            if autoPresentation == .working || autoPresentation == .checking {
+                lines += auto.jobs.map { "Agent: \($0.name)" }
+            }
+            if let reason = auto.pauseReason { lines.append("Paused: \(reason.rawValue)") }
+            lines += auto.warnings
+        }
+        if let error = manager.lastError { lines.append(error) }
+        return lines.joined(separator: "\n")
+    }
+
+    private var iconHelp: String {
+        let gesture: String
+        if AutoMenuBarPresentation.isRestoring(manager: manager) {
+            gesture = "Sleep restoration pending. Click for recovery details."
+        } else {
+            gesture = "Click or right-click to toggle quick actions."
+        }
+        return (usesAutoPresentation ? autoHelp + "\n" : "") + gesture + " ⌘-drag to move."
+    }
 
     /// What the countdown reads. A projection, when there is one, wins over
     /// the live text: an extension typed over a running session shows its
@@ -68,14 +107,14 @@ struct StatusRootView: View {
             // on its transition (`Motion.countdownTransition` and friends):
             // the branch switches outside any animation, and an
             // `.animation(_:value:)` on this container did not reach it.
-            if model.slotsPresent {
+            if showsInput {
                 pills
                 if let error = model.startError {
                     startError(error)
                         .opacity(model.startErrorShown ? 1 : 0)
                         .animation(Motion.base(reduceMotion: reduceMotion), value: model.startErrorShown)
                 }
-            } else if showsCountdown {
+            } else if showsCountdown && !usesAutoPresentation {
                 countdown
             }
         }
@@ -83,7 +122,7 @@ struct StatusRootView: View {
         // Never animated: `slotsPresent` can land in the same transaction as
         // a `withAnimation` (a refused start reopens the pills in one turn),
         // and an interpolated inset would report a width per frame.
-        .animation(nil) { $0.padding(.trailing, model.slotsPresent ? 8 : 6) }
+        .animation(nil) { $0.padding(.trailing, showsInput ? 8 : 6) }
         .frame(height: NSStatusBar.system.thickness)
         .fixedSize()
         .contentShape(Rectangle())
@@ -98,11 +137,13 @@ struct StatusRootView: View {
         }
     }
 
-    /// A closed eye while idle; it opens while sleep is held, so the app
-    /// visibly does something even when Low Power Mode is not showing.
+    /// Auto's repeating blink signals armed mode, not a power assertion.
+    /// Actual work/restore state remains in the tooltip and accessibility value.
     private var icon: some View {
         Button(action: onTapIcon) {
-        EyeMarkView(isRunning: eyeOpen, reduceMotion: reduceMotion)
+        EyeMarkView(isRunning: AutoEyeBlink.displayOpen(armed: manager.agentAuto?.enabled == true,
+                                                      reduceMotion: reduceMotion, blinkOpen: autoEyeOpen,
+                                                      fallbackOpen: eyeOpen), reduceMotion: reduceMotion)
             .frame(width: 20, height: 20)
             .contentShape(Rectangle())
             .phaseAnimator([CGFloat(1), reduceMotion ? 1 : 0.96, 1], trigger: model.iconBounce) { content, scale in
@@ -112,10 +153,15 @@ struct StatusRootView: View {
             }
         }
         .buttonStyle(.plain)
-        .help("Click to \(isRunning ? "end" : "start") a session. Right-click for quick actions. ⌘-drag to move.")
-        .accessibilityLabel(model.phase == .starting ? "Starting session" : isRunning ? "End session" : "Start session")
-        .accessibilityValue(eyeOpen ? "Awake" : "Idle")
-        .accessibilityAction(named: Text("Open quick actions"), onOpenMenu)
+        .task(id: loopsAutoEye) {
+            guard loopsAutoEye else { return }
+            // Never reset from a cancelled task: a replacement may have begun.
+            try? await AutoEyeBlink.run { autoEyeOpen = $0 }
+        }
+        .help(iconHelp)
+        .accessibilityLabel("Toggle quick actions")
+        .accessibilityValue(usesAutoPresentation ? autoHelp : eyeOpen ? "Awake" : "Idle")
+        .accessibilityAction(named: Text("Toggle quick actions"), onOpenMenu)
     }
 
     /// All three slots are in the layout whenever they are present;

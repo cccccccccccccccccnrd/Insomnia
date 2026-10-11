@@ -5,6 +5,26 @@ import XCTest
 
 final class UIFeedbackTests: XCTestCase {
     @MainActor
+    func testIdleAutoOnOffPlaysModeSoundsWithoutHoldingSleep() async {
+        let harness = Harness()
+        defer { harness.home.destroy() }
+        let manager = harness.makeManager()
+        let auto = AgentAutoController(manager: manager, pollInterval: nil)
+        manager.agentAuto = auto
+        var cues: [SessionSoundCue] = []
+        let controller = StatusItemController(manager: manager, status: PlaceholderStatus(), showSettings: {},
+                                              playSessionSound: { cues.append($0) }, captureEvents: false)
+        await controller.toggleAuto()
+        XCTAssertTrue(auto.enabled)
+        XCTAssertEqual(cues, [.activated])
+        XCTAssertFalse(manager.isActive)
+        XCTAssertFalse(harness.guardFake.sleepDisabled)
+        await controller.toggleAuto()
+        XCTAssertFalse(auto.enabled)
+        XCTAssertEqual(cues, [.activated, .deactivated])
+    }
+
+    @MainActor
     func testSoundWaitsForSuccessfulActivationAndCompletedDeactivation() async throws {
         let harness = Harness()
         defer { harness.home.destroy() }
@@ -64,6 +84,38 @@ final class UIFeedbackTests: XCTestCase {
         XCTAssertEqual(host.fittingSize.width, 260, accuracy: 1)
         XCTAssertLessThan(host.fittingSize.height, 400)
         XCTAssertGreaterThan(host.fittingSize.height, 250)
+    }
+
+    @MainActor
+    func testRegisteredAgentResolvesNearestOwningApplication() {
+        let parents: [Int32: Int32] = [900: 800, 800: 700, 700: 1]
+        let parent: (Int32) -> Int32? = { parents[$0] }
+        XCTAssertEqual(RunningApps.ownerApplicationPID(ownerPID: 900, applicationPIDs: [700], parentPID: parent), 700)
+        XCTAssertEqual(RunningApps.ownerApplicationPID(ownerPID: 900, applicationPIDs: [900, 700], parentPID: parent), 900)
+        XCTAssertNil(RunningApps.ownerApplicationPID(ownerPID: 900, applicationPIDs: [600], parentPID: parent))
+        XCTAssertNil(RunningApps.ownerApplicationPID(ownerPID: 900, applicationPIDs: [700], parentPID: { $0 == 900 ? 800 : 900 }))
+    }
+
+    @MainActor
+    func testAgentRowFocusesItsOwnerApplication() {
+        let harness = Harness()
+        defer { harness.home.destroy() }
+        var activated: [Int32] = []
+        let controller = StatusItemController(
+            manager: harness.makeManager(), status: PlaceholderStatus(), showSettings: {}, captureEvents: false,
+            activateAgentApplication: { activated.append($0); return true }
+        )
+        let now = Date()
+        let job = AgentJob(
+            id: UUID(), name: "HerdR agent", pid: 4242,
+            identity: ProcessIdentity(startedAt: 42, startedAtMicros: 12, bootSession: "test"),
+            startedAt: now, deadline: now.addingTimeInterval(3600), heartbeatAt: now,
+            startedUptime: 100, heartbeatUptime: 100
+        )
+
+        controller.focusAgent(job)
+
+        XCTAssertEqual(activated, [job.pid])
     }
 
     @MainActor

@@ -26,20 +26,25 @@ final class StatusMenuMouseTests: XCTestCase {
         XCTAssertNil(fixture.host.filterMenuMouse(try fixture.event(.leftMouseUp)))
         XCTAssertEqual(fixture.menuOpenCount, 1)
         XCTAssertFalse(fixture.manager.isActive)
-        XCTAssertNotNil(fixture.host.filterMenuMouse(try fixture.event(.leftMouseDown)))
-        XCTAssertNotNil(fixture.host.filterMenuMouse(try fixture.event(.leftMouseUp)))
+        XCTAssertNil(fixture.host.filterMenuMouse(try fixture.event(.leftMouseDown)))
+        XCTAssertNil(fixture.host.filterMenuMouse(try fixture.event(.leftMouseUp)))
+        XCTAssertEqual(fixture.menuOpenCount, 2)
     }
 
     @MainActor
-    func testPrimaryClicksAndCommandDragRemainAvailableToTheNativeControls() throws {
+    func testPrimaryClickOpensOnlyMenuWhileCommandDragRemainsNative() throws {
         let fixture = MenuMouseFixture()
         defer { fixture.close() }
         for type in [NSEvent.EventType.leftMouseDown, .leftMouseDragged, .leftMouseUp] {
-            XCTAssertNotNil(fixture.host.filterMenuMouse(try fixture.event(type)))
+            XCTAssertNil(fixture.host.filterMenuMouse(try fixture.event(type)))
+        }
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseDragged, .leftMouseUp] {
             XCTAssertNotNil(fixture.host.filterMenuMouse(try fixture.event(type, flags: .command)))
         }
         XCTAssertNotNil(fixture.host.filterMenuMouse(try fixture.event(.rightMouseDown, flags: .command)))
-        XCTAssertEqual(fixture.menuOpenCount, 0)
+        XCTAssertEqual(fixture.menuOpenCount, 1)
+        XCTAssertFalse(fixture.manager.isActive)
+        XCTAssertEqual(fixture.model.phase, .idle)
     }
 
     @MainActor
@@ -86,7 +91,7 @@ private final class MenuMouseFixture {
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 50), styleMask: .borderless, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host
-        host.onRightMouseDown = { [weak self] in self?.menuOpenCount += 1 }
+        host.onMenuMouseDown = { [weak self] in self?.menuOpenCount += 1 }
     }
 
     func event(_ type: NSEvent.EventType, flags: NSEvent.ModifierFlags = [], point: NSPoint = NSPoint(x: 15, y: 25), window: NSWindow? = nil) throws -> NSEvent {

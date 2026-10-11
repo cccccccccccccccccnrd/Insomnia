@@ -68,6 +68,39 @@ enum RunningApps {
         return name
     }
 
+    /// Finds the nearest GUI application owning a registered worker. A CLI
+    /// turn usually belongs to a shell below Terminal, while GUI runners such
+    /// as HerdR may register their application pid directly.
+    static func ownerApplicationPID(
+        ownerPID: Int32,
+        applicationPIDs: Set<Int32>,
+        parentPID: (Int32) -> Int32?
+    ) -> Int32? {
+        var pid = ownerPID
+        var visited = Set<Int32>()
+        for _ in 0..<64 {
+            guard pid > 1, visited.insert(pid).inserted else { return nil }
+            if applicationPIDs.contains(pid) { return pid }
+            guard let parent = parentPID(pid), parent != pid else { return nil }
+            pid = parent
+        }
+        return nil
+    }
+
+    /// Bring forward the GUI application that owns a registered worker.
+    /// `activateAllWindows` is intentional: a job does not identify one
+    /// particular window within its owning application.
+    @discardableResult
+    static func activate(ownerPID: Int32) -> Bool {
+        let applications = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy != .prohibited }
+        let pids = Set(applications.map(\.processIdentifier))
+        guard let appPID = ownerApplicationPID(ownerPID: ownerPID, applicationPIDs: pids, parentPID: { pid in
+            guard case let .present(process) = SignalProcessControl.processTableState(pid: pid) else { return nil }
+            return process.ppid
+        }), let application = NSRunningApplication(processIdentifier: appPID) else { return false }
+        return application.activate(options: [.activateAllWindows])
+    }
+
     /// Resolve an installed app icon once, outside countdown updates.
     static func icon(for bundleID: String) -> NSImage? {
         if let icon = resolvedIcons[bundleID] { return icon }

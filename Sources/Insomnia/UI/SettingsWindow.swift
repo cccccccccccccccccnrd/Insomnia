@@ -14,15 +14,11 @@ final class SettingsWindow: NSObject, NSToolbarDelegate {
     private(set) var window: NSWindow?
     let navigation = SettingsNavigationModel()
     private let content: (SettingsNavigationModel) -> AnyView
-    private var keyMonitor: Any?
+    private var keyMonitor: MainThreadEventMonitor?
 
     init(content: @escaping (SettingsNavigationModel) -> AnyView) {
         self.content = content
         super.init()
-    }
-
-    isolated deinit {
-        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
     }
 
     /// Bring the window up, creating it the first time. An accessory app has
@@ -80,7 +76,7 @@ final class SettingsWindow: NSObject, NSToolbarDelegate {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             let handled = MainActor.assumeIsolated { self?.handleShortcut(event) ?? false }
             return handled ? nil : event
-        }
+        }.map { MainThreadEventMonitor($0) }
         return window
     }
 

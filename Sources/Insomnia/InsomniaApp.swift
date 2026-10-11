@@ -36,7 +36,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     override init() {
         #if DEBUG
         if UIPreview.isEnabled {
-            manager = UIPreview.makeManager()
+            let manager = UIPreview.makeManager()
+            self.manager = manager
+            manager.agentAuto = AgentAutoController(manager: manager, pollInterval: nil)
             secrets = PreviewHotspotSecrets()
             status = PlaceholderStatus()
             locationPermission = LocationPermission(authorizationStatus: .notDetermined)
@@ -47,6 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
         let manager = SessionManager.live()
         self.manager = manager
+        manager.agentAuto = AgentAutoController(manager: manager)
         loginItem = LoginItem()
         secrets = KeychainHotspotSecretStore(keychain: KeychainStore()) {
             manager.config.hotspotSSID
@@ -137,7 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         #endif
-        Task { await manager.reconcile() }
+        Task { await statusItem?.reconcileAndEnableDefaultAuto() }
     }
 
     /// Quitting always ends the session (spec 1). Terminate is deferred until

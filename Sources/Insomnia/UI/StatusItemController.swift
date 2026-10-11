@@ -5,7 +5,7 @@ import SwiftUI
 ///
 /// The status bar button hosts a SwiftUI view and the item's length is
 /// written once to whatever that view fits into (`StatusWidthWriter`). A
-/// right-click popover contains quick actions; left-click toggles the session.
+/// popover contains quick actions; either mouse button opens it.
 /// The detailed status and recovery actions remain in a native NSMenu.
 /// Keyboard input never reaches a text field inside a status bar window, so
 /// a local key monitor routes digits / Tab / Enter / Esc / Delete to the
@@ -26,6 +26,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private let makeWidthWriter: WidthWriterFactory?
     private let playSessionSound: @MainActor (SessionSoundCue) -> Void
     private var userEndInFlight = false
+    private var didApplyLaunchDefault = false
+    private let makeQuickPopover: (@MainActor () -> NSPopover)?
+    private let currentMenuEvent: @MainActor () -> NSEvent?
+    private let activateAgentApplication: @MainActor (Int32) -> Bool
     /// Asks before a browser is quit for a relaunch; true means go ahead.
     /// Injected so tests never see the NSAlert.
     private let confirmRelaunch: @MainActor (String) -> Bool
@@ -33,10 +37,13 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     /// manager's fake clock so the text does not depend on when the tick
     /// happens to run.
     private let clock: @Sendable () -> Date
+    private let captureEvents: Bool
+    private var inputSessionActive = false
 
     private let statusItem: NSStatusItem
     private var hostingView: StatusHostingView?
     private var quickPopover: NSPopover?
+    private var lastQuickMenuToggleEvent: NSEvent?
     #if DEBUG
     private var menuPreviewWindow: NSWindow?
     #endif
@@ -77,7 +84,11 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         makeWidthWriter: WidthWriterFactory? = nil,
         confirmRelaunch: (@MainActor (String) -> Bool)? = nil,
         clock: @escaping @Sendable () -> Date = { Date() },
-        playSessionSound: @escaping @MainActor (SessionSoundCue) -> Void = { _ in }
+        playSessionSound: @escaping @MainActor (SessionSoundCue) -> Void = { _ in },
+        captureEvents: Bool = true,
+        makeQuickPopover: (@MainActor () -> NSPopover)? = nil,
+        currentMenuEvent: @escaping @MainActor () -> NSEvent? = { NSApp.currentEvent },
+        activateAgentApplication: @escaping @MainActor (Int32) -> Bool = { RunningApps.activate(ownerPID: $0) }
     ) {
         self.manager = manager
         self.status = status
@@ -86,10 +97,16 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         self.confirmRelaunch = confirmRelaunch ?? Self.askBeforeRelaunch
         self.clock = clock
         self.playSessionSound = playSessionSound
-        Self.seedPreferredPositionIfNeeded()
+        self.captureEvents = captureEvents
+        self.makeQuickPopover = makeQuickPopover
+        self.currentMenuEvent = currentMenuEvent
+        self.activateAgentApplication = activateAgentApplication
+        if captureEvents { Self.seedPreferredPositionIfNeeded() }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.autosaveName = Self.autosaveName
-        statusItem.behavior = [.terminationOnRemoval]
+        if captureEvents {
+            statusItem.autosaveName = Self.autosaveName
+            statusItem.behavior = [.terminationOnRemoval]
+        }
         super.init()
         installHostingView()
         observeManager()
@@ -111,17 +128,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         guard let button = statusItem.button else { return }
         let apply: (CGFloat) -> Void = { [statusItem] width in statusItem.length = width }
         widthWriter = makeWidthWriter?(apply) ?? StatusWidthWriter(apply: apply)
-        let root = StatusRootView(
-            model: model,
-            manager: manager,
-            onTapIcon: { [weak self] in self?.toggleSession() },
-            onTapPill: { [weak self] field in self?.focus(field) },
-            onTapCountdown: { [weak self] in self?.toggleSession() },
-            onWidthChange: { [weak self] w in self?.widthChanged(w) },
-            onOpenMenu: { [weak self] in self?.showQuickMenu() }
-        )
-        let host = Self.makeHostingView(root)
-        host.onRightMouseDown = { [weak self] in self?.showQuickMenu() }
+        let host = Self.makeHostingView(makeStatusRootView())
+        host.onMenuMouseDown = { [weak self] in self?.showQuickMenu() }
         host.translatesAutoresizingMaskIntoConstraints = true
         // The height follows the button; the width is set from the layout
         // (`retargetWidth`) and never from the button, whose width is the
@@ -144,6 +152,17 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         widthChanged(host.fittingSize.width)
         logFrames("installed")
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.logFrames("after 1s") }
+    }
+
+    /// The icon, countdown and accessibility action all navigate; only menu
+    /// controls may change modes. Also used by non-interactive UI fixtures.
+    func makeStatusRootView() -> StatusRootView {
+        StatusRootView(model: model, manager: manager,
+                       onTapIcon: { [weak self] in self?.showQuickMenu() },
+                       onTapPill: { [weak self] in self?.focus($0) },
+                       onTapCountdown: { [weak self] in self?.showQuickMenu() },
+                       onWidthChange: { [weak self] in self?.widthChanged($0) },
+                       onOpenMenu: { [weak self] in self?.showQuickMenu() })
     }
 
     /// Centralizes the AppKit/SwiftUI boundary so its sizing contract can be
@@ -224,6 +243,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private func observeManager() {
         withObservationTracking {
             _ = manager.session
+            _ = manager.agentAuto?.enabled
+            _ = manager.agentAuto?.pauseReason
         } onChange: { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
@@ -234,7 +255,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     }
 
     private func managerChanged() {
-        reminder.sync(endsAt: manager.session?.endsAt)
+        reminder.sync(endsAt: manager.session?.agentAuto == true ? nil : manager.session?.endsAt)
+        if manager.session?.agentAuto == true, model.phase.isEntering { collapse() }
         if let next = Self.phase(forActive: manager.isActive, phase: model.phase) {
             switch next {
             case .idle, .running:
@@ -283,12 +305,14 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
     // MARK: Clicks
 
-    /// Left-click toggles immediately. Pending starts ignore further clicks
+    /// The quick-menu timer action toggles immediately. Pending starts ignore further actions
     /// until the journal-backed lifecycle operation answers.
     func toggleSession() {
         quickPopover?.close()
-        guard model.phase != .starting else { return }
-        if manager.isActive {
+        guard model.phase != .starting, !model.autoActionPending, !AutoMenuBarPresentation.isRestoring(manager: manager) else { return }
+        if manager.agentAuto?.enabled == true || manager.session?.agentAuto == true {
+            Task { await toggleAuto() }
+        } else if manager.isActive {
             endNow()
         } else {
             startPreset(manager.config.defaultPreset)
@@ -296,16 +320,66 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     }
 
     func startPreset(_ duration: TimeInterval) {
-        guard model.phase != .starting, duration > 0 else { return }
+        guard duration > 0, AutoMenuBarPresentation.timerControlsEnabled(manager: manager, model: model) else { return }
         quickPopover?.close()
+        if let auto = manager.agentAuto, auto.enabled {
+            // A preset is an explicit Timer choice. Only idle Auto can be
+            // disarmed here; registered/arming work blocks this path.
+            model.autoActionPending = true
+            Task { @MainActor in
+                await auto.setEnabled(false)
+                model.autoActionPending = false
+                guard AutoMenuBarPresentation.timerControlsEnabled(manager: manager, model: model) else { return }
+                startPreset(duration)
+            }
+            return
+        }
         model.input = DurationInput.from(seconds: duration)
         run(mode: manager.isActive ? .extend : .start, duration: duration, usesInlineInput: false)
     }
 
-    /// Right-click opens quick actions. Build the content when the
+    /// Reconcile old ownership first, then apply the one-shot launch default.
+    /// Failed recovery, a resumed timer, cancellation or Quit must not rearm Auto.
+    func reconcileAndEnableDefaultAuto() async {
+        guard !didApplyLaunchDefault else { return }
+        didApplyLaunchDefault = true
+        model.autoActionPending = true
+        await manager.reconcile()
+        model.autoActionPending = false
+        guard !Task.isCancelled, !manager.quitRequested, manager.lastError == nil,
+              !manager.state.isDirty, !manager.isActive, manager.pendingEnd == nil,
+              manager.startingSessionIsAuto == nil, manager.agentAuto?.enabled == false else { return }
+        await toggleAuto()
+        if manager.agentAuto?.enabled == true {
+            Log.info("Auto enabled by launch default; sleep is held only for registered work")
+        }
+    }
+
+    /// Serialized mode control. Idle enablement does not start a timer or
+    /// claim a sleep hold, but still acknowledges the user's mode choice.
+    func toggleAuto() async {
+        guard let auto = manager.agentAuto,
+              AutoMenuBarPresentation.autoControlEnabled(manager: manager, model: model) else { return }
+        model.autoActionPending = true
+        defer { model.autoActionPending = false }
+        if model.phase.isEntering { collapse() }
+        let enabling = !auto.enabled
+        await auto.setEnabled(enabling)
+        if enabling, auto.enabled {
+            playSessionSound(.activated)
+        } else if !enabling, !auto.enabled, !manager.isActive,
+                  !AutoMenuBarPresentation.isRestoring(manager: manager), !manager.state.isDirty {
+            playSessionSound(.deactivated)
+        }
+        // Keep the quick menu visible so a refused start's reason and any
+        // restoration warning are immediately available.
+    }
+
+    /// Either click toggles quick actions. Build the content when the
     /// panel opens; no popover view or status queries run while it is closed.
     func showQuickMenu() {
         guard let button else { return }
+        lastQuickMenuToggleEvent = currentMenuEvent()
         if let quickPopover, quickPopover.isShown {
             quickPopover.close()
             return
@@ -313,7 +387,13 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         status.refreshInstant()
         status.refreshOnDemand()
         model.iconBounce += 1
-        let popover = NSPopover()
+        // Fixtures exercise navigation without activating desktop UI.
+        guard captureEvents || makeQuickPopover != nil else { return }
+        // Registration happens outside this process. Do not make an opened
+        // menu wait for the next periodic scan before replacing stale idle
+        // copy with checking/working state.
+        Task { await manager.agentAuto?.poll() }
+        let popover = makeQuickPopover?() ?? NSPopover()
         popover.behavior = .transient
         popover.appearance = NSApp.appearance
         popover.delegate = self
@@ -322,7 +402,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         popover.animates = false
         popover.contentViewController = NSHostingController(rootView: quickMenuContent())
         quickPopover = popover
-        NSApp.activate(ignoringOtherApps: true)
+        if captureEvents { NSApp.activate(ignoringOtherApps: true) }
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
     }
 
@@ -331,6 +411,11 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         #if DEBUG
         menuPreviewWindow?.close()
         #endif
+    }
+
+    func focusAgent(_ job: AgentJob) {
+        dismissQuickMenu()
+        _ = activateAgentApplication(job.pid)
     }
 
     private func quickMenuContent() -> QuickMenuView {
@@ -349,7 +434,9 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
                 self?.showMenu()
             },
             onQuit: { NSApp.terminate(nil) },
-            onDismiss: { [weak self] in self?.dismissQuickMenu() }
+            onDismiss: { [weak self] in self?.dismissQuickMenu() },
+            onToggleAuto: { [weak self] in Task { await self?.toggleAuto() } },
+            onFocusAgent: { [weak self] in self?.focusAgent($0) }
         )
     }
 
@@ -367,6 +454,18 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         window.makeKeyAndOrderFront(nil)
     }
     #endif
+
+    func popoverShouldClose(_ popover: NSPopover) -> Bool {
+        // A transient popover may dismiss before our mouse-down handler.
+        // Leave a fresh anchor click to that handler, which force-closes it.
+        // An already-handled/stale event must not block outside dismissal.
+        guard popover === quickPopover, let event = currentMenuEvent(),
+              event !== lastQuickMenuToggleEvent,
+              StatusHostingView.handlesMenu(type: event.type, modifiers: event.modifierFlags),
+              let button, let window = button.window, event.window === window,
+              button.bounds.contains(button.convert(event.locationInWindow, from: nil)) else { return true }
+        return false
+    }
 
     func popoverDidClose(_ notification: Notification) {
         guard let closed = notification.object as? NSPopover, closed === quickPopover else { return }
@@ -581,7 +680,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         guard case let .entering(mode) = model.phase else { return }
         // Nothing to commit once the monitors are down: Enter has already
         // been pressed (or Esc), and the slots are retracting.
-        guard keyCatcher != nil else { return }
+        guard inputSessionActive, AutoMenuBarPresentation.timerControlsEnabled(manager: manager, model: model) else { return }
         switch MenuBarModel.commitAction(mode: mode, typed: model.input.total, defaultPreset: manager.config.defaultPreset) {
         case let .run(duration):
             run(mode: mode, duration: duration)
@@ -752,7 +851,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     /// Clicking the mark or the countdown while a session runs: reopen the
     /// pills, this time to extend. Ignored while a start is still in flight.
     func customExtend() {
-        guard manager.isActive else { return }
+        guard manager.isActive, manager.session?.agentAuto != true else { return }
         expand(mode: .extend)
     }
 
@@ -779,7 +878,9 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             settings: #selector(menuOpenSettings),
             quit: #selector(menuQuit),
             relaunchBrowser: #selector(menuRelaunchBrowser(_:)),
-            stopWaitingForOutput: #selector(menuStopWaitingForOutput(_:))
+            stopWaitingForOutput: #selector(menuStopWaitingForOutput(_:)),
+            toggleAuto: #selector(menuToggleAuto),
+            autoToggleEnabled: AutoMenuBarPresentation.autoControlEnabled(manager: manager, model: model)
         )
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height + 4), in: button)
     }
@@ -787,7 +888,20 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     /// The menu's lines from what the session and the status source report
     /// now. Static, so a test can check them without a status item.
     static func menuItems(manager: SessionManager, status: any StatusSource) -> [StatusMenu.Item] {
-        StatusMenu.items(
+        var autoItems: [StatusMenu.Item] = []
+        if let auto = manager.agentAuto {
+            let presentation = AutoMenuBarPresentation.current(manager: manager, model: MenuBarModel())
+            autoItems.append(.init(title: presentation == .off ? "Enable Auto — until agents finish" : presentation.actionTitle, kind: .toggleAuto))
+            autoItems.append(.init(title: "\(presentation.title) — \(presentation.detail)", kind: .info))
+            for job in auto.jobs where auto.enabled || manager.session?.agentAuto == true {
+                autoItems.append(.init(title: "Agent: \(job.name) · PID \(job.pid) · \(job.id.uuidString.prefix(8))", kind: .info))
+            }
+            if let reason = auto.pauseReason { autoItems.append(.init(title: "Paused: \(reason.rawValue)", kind: .warning)) }
+            for warning in auto.warnings.prefix(5) { autoItems.append(.init(title: warning, kind: .warning)) }
+            autoItems.append(.init(title: "Auto: registered work only; battery floor ≥10%, thermal safety always on (AC too). Never use in a bag.", kind: .info))
+            autoItems.append(.init(title: "", kind: .separator))
+        }
+        return autoItems + StatusMenu.items(
             sessionActive: manager.isActive,
             sleepHeld: manager.state.sleepDisabledByUs,
             machine: StatusLines.machine(
@@ -814,6 +928,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             foreignSleep: manager.foreignSleepWarning,
             outputsWaiting: manager.outputsWaitingForRestore
         )
+    }
+
+    @objc private func menuToggleAuto() {
+        Task { await toggleAuto() }
     }
 
     @objc private func menuStopWaitingForOutput(_ sender: NSMenuItem) {
@@ -875,6 +993,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
     private func installMonitors() {
         removeMonitors()
+        inputSessionActive = true
+        guard captureEvents else { return }
         // The key monitor below is local, so it only fires on events routed
         // to a key window this app owns, which an accessory app with no
         // window never has. The catcher panel is non-activating: making it
@@ -901,6 +1021,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     }
 
     private func removeMonitors() {
+        inputSessionActive = false
         if let m = keyMonitor { NSEvent.removeMonitor(m) }
         if let m = localMouseMonitor { NSEvent.removeMonitor(m) }
         if let m = globalMouseMonitor { NSEvent.removeMonitor(m) }
@@ -968,17 +1089,15 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     }
 }
 
-/// The SwiftUI host covers the status bar button, so the right click has to
-/// be caught here rather than on the button. Ctrl-click is the same gesture
-/// on a one-button mouse.
+/// The SwiftUI host covers the status bar button. Consume either click's
+/// full gesture here, without triggering a descendant button twice.
 final class StatusHostingView: NSHostingView<StatusRootView> {
-    var onRightMouseDown: (() -> Void)?
-    private var menuMouseMonitor: Any?
+    var onMenuMouseDown: (() -> Void)?
+    private var menuMouseMonitor: MainThreadEventMonitor?
     private var menuMouseButton: Int?
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if let menuMouseMonitor { NSEvent.removeMonitor(menuMouseMonitor) }
         menuMouseMonitor = nil
         menuMouseButton = nil
         guard window != nil else { return }
@@ -993,11 +1112,7 @@ final class StatusHostingView: NSHostingView<StatusRootView> {
                 return self.filterMenuMouse(event) == nil
             }
             return consumed ? nil : event
-        }
-    }
-
-    isolated deinit {
-        if let menuMouseMonitor { NSEvent.removeMonitor(menuMouseMonitor) }
+        }.map { MainThreadEventMonitor($0) }
     }
 
     /// Nil means that the event belongs solely to the quick-menu gesture.
@@ -1018,7 +1133,7 @@ final class StatusHostingView: NSHostingView<StatusRootView> {
               !Self.usesSystemDrag(modifiers: event.modifierFlags),
               Self.handlesMenu(type: event.type, modifiers: event.modifierFlags) else { return event }
         menuMouseButton = event.buttonNumber
-        onRightMouseDown?()
+        onMenuMouseDown?()
         return nil
     }
 
@@ -1038,16 +1153,16 @@ final class StatusHostingView: NSHostingView<StatusRootView> {
     }
 
     static func handlesMenu(type: NSEvent.EventType, modifiers: NSEvent.ModifierFlags) -> Bool {
-        type == .rightMouseDown || (type == .leftMouseDown && modifiers.contains(.control))
+        !usesSystemDrag(modifiers: modifiers) && (type == .rightMouseDown || type == .leftMouseDown)
     }
 
     override func rightMouseDown(with event: NSEvent) {
-        onRightMouseDown?()
+        if !Self.usesSystemDrag(modifiers: event.modifierFlags) { onMenuMouseDown?() }
     }
 
     override func mouseDown(with event: NSEvent) {
-        if event.modifierFlags.contains(.control) {
-            onRightMouseDown?()
+        if !Self.usesSystemDrag(modifiers: event.modifierFlags) {
+            onMenuMouseDown?()
             return
         }
         super.mouseDown(with: event)

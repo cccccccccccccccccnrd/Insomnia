@@ -34,7 +34,7 @@
 > [Validation status](docs/release-validation.md) · [Apple's ventilation guidance](https://support.apple.com/en-us/102336)
 
 <p align="center">
-  <img src="docs/assets/session-flow.svg" alt="Left-click the eye to start or end the default four-hour session. Watch the countdown in hours and minutes. Right-click the eye or countdown for quick actions. Closing the lid is optional, and incomplete recovery needs attention." width="880">
+  <img src="docs/assets/session-flow.svg" alt="Either click opens quick actions. Choose a timer, watch its countdown, and choose End session in the menu. Auto starts enabled after clean recovery. Closing the lid is optional, and incomplete recovery needs attention." width="880">
 </p>
 
 ## Install
@@ -96,15 +96,14 @@ file and explains how upgrades replace them.
 
 ## Using it
 
-1. **Start or stop.** Left-click the eye to start a session of the default
-   length, four hours at first, or to stop the running one. The eye opens
-   right away while the start is pending. Pick another default in
-   Settings > General.
-2. **Quick actions.** Right-click the eye or the countdown for a 30-minute,
-   one-hour, two-hour, four-hour, six-hour or eight-hour session. During a session these buttons
-   add time.
-3. **End early.** Left-click the eye or timer, or choose End session in quick actions.
-4. **Settings and status.** The same right-click menu opens Settings, Status
+1. **Toggle quick actions.** Left-click, right-click or Control-click the eye
+   or countdown to open the menu; click again to close it. This never changes
+   the running mode.
+2. **Choose a timer.** Pick a 30-minute, one-hour, two-hour, four-hour,
+   six-hour or eight-hour session. Presets replace idle Auto; during a timed
+   session they add time. Settings > General manages the default duration.
+3. **End early.** Choose **End session** or **Disable Auto** in quick actions.
+4. **Settings and status.** The same menu opens Settings, Status
    details and Quit Insomnia. Quit asks Insomnia to undo the session first,
    and it refuses while a change is still waiting to be undone. Saved audio
    for an output that isn't connected doesn't hold it up. Insomnia restores
@@ -121,9 +120,32 @@ Settings has General, Lid actions and Advanced pages. These screenshots come
 from the UI preview described under [Development](#development). The purple
 title-bar indicator is macOS window sharing, not an Insomnia control.
 
+### Auto — registered agent work
+
+Auto starts **enabled by default after clean launch recovery**, unless a
+previous timed session is still running. It keeps the Mac awake only while
+explicitly registered agent jobs are running. Auto is **icon-only**: the eye
+rests open for three seconds, briefly closes, then reopens (steadily open with Reduce Motion).
+Hover or open the menu for status: **Auto: idle** permits normal sleep;
+**Auto: working** identifies a live hold. The menu names the jobs.
+Choose **Disable Auto** in the menu to disarm it; either click only opens
+the menu. Timed presets can replace idle Auto, never active or arming work.
+Safety ends keep Auto paused until explicitly enabled again. Timer and Auto
+on/off actions retain their soft sounds; opening the menu stays silent.
+
+```bash
+./scripts/agent-run.sh --name 'Codex task' -- codex exec 'Run the tests'
+./scripts/agent-run.sh --name 'Claude task' -- claude -p 'Review this change'
+```
+
+Use finite commands, not idle interactive shells. Auto enforces thermal
+safety and a battery end floor of at least 10%, even if timed-session safety
+settings are weaker. See [docs/auto.md](docs/auto.md) for leases, explicit
+turn registration, recovery limits and testing.
+
 You don't have to close the lid, and opening it doesn't end the session.
 
-On battery power, Insomnia turns on Low Power Mode below 40% and ends the
+For timed sessions on battery power, Insomnia turns on Low Power Mode below 40% and ends the
 session below 10%. Those are the defaults. You can change both in Settings,
 and an end floor of 0 turns the battery end off. The heat rules turn on Low Power
 Mode when the Mac gets seriously hot and end the session at critical heat.
